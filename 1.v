@@ -125,19 +125,23 @@ module axi_stream_insert_header #(
             r_keep_out <= keep_insert;
         end else if (valid_in && r_ready_in) begin
              // 处理 last_in 的情况，动态更新 keep_out
-            if (last_in) begin
-                // 处理最后一拍的有效字节
-                case (keep_in)
-                4'b1111: r_keep_out <= 4'b1111;  // 所有字节有效
-                4'b1110: r_keep_out <= 4'b1110;  // 最后一个字节无效
-                4'b1100: r_keep_out <= 4'b1100;  // 最后两个字节无效
-                4'b1000: r_keep_out <= 4'b1000;  // 最后三个字节无效
-                default: r_keep_out <= 4'b0000;  // 无效的 keep_in
-                endcase
-            end else begin
-                // 不是最后一拍，所有字节有效
-                r_keep_out <= keep_in;
-            end
+            integer i;
+            always @(posedge clk or negedge rst_n) begin
+                if (~rst_n) begin
+                    r_keep_out <= {DATA_BYTE_WD{1'b0}};  // 生成宽度为 DATA_BYTE_WD 位的信号
+                end else if (last_in) begin
+                    // 处理最后一拍的有效字节
+                    for (i = 0; i < DATA_BYTE_WD; i = i + 1) begin
+                        if (keep_in[i]) begin
+                            r_keep_out[i] <= 1'b1;  // 对应字节有效
+                        end else begin
+                            r_keep_out[i] <= 1'b0;  // 对应字节无效
+                        end
+                    end
+                end else begin
+                    r_keep_out <= keep_in;  // 不是最后一拍，保持原有效字节
+                end
+            end            
             r_data_out <= data_in;//其次再输出主数据流
         end
     end
