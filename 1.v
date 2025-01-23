@@ -125,27 +125,46 @@ module axi_stream_insert_header #(
             r_keep_out <= keep_insert;
         end else if (valid_in && r_ready_in) begin
              // 处理 last_in 的情况，动态更新 keep_out
-            integer i;
-            always @(posedge clk or negedge rst_n) begin
-                if (~rst_n) begin
-                    r_keep_out <= {DATA_BYTE_WD{1'b0}};  // 生成宽度为 DATA_BYTE_WD 位的信号
-                end else if (last_in) begin
-                    // 处理最后一拍的有效字节
-                    for (i = 0; i < DATA_BYTE_WD; i = i + 1) begin
-                        if (keep_in[i]) begin
-                            r_keep_out[i] <= 1'b1;  // 对应字节有效
-                        end else begin
-                            r_keep_out[i] <= 1'b0;  // 对应字节无效
-                        end
-                    end
-                end else begin
-                    r_keep_out <= keep_in;  // 不是最后一拍，保持原有效字节
-                end
-            end            
-            r_data_out <= data_in;//其次再输出主数据流
+            wire [BYTE_CNT_WD-1:0] valid_byte_count; // 最后一拍有效字节数
+    wire [DATA_WD-1:0] dynamic_mask;         // 最后一拍动态掩码
+    wire [DATA_WD-1:0] data_masked;         // 应用掩码后的数据
+
+    // 计算有效字节数：遍历 keep_in 确定有效字节
+    integer i;
+    reg [BYTE_CNT_WD-1:0] count_valid_bytes;
+    always @(*) begin
+        count_valid_bytes = 0;
+        for (i = 0; i < DATA_BYTE_WD; i = i + 1) begin
+            if (keep_in[i]) begin
+                count_valid_bytes = i + 1;
+            end
         end
     end
 
+    // 动态掩码生成：根据有效字节数
+    assign dynamic_mask = (1 << (count_valid_bytes * 8)) - 1;
+    assign data_masked = data_in & dynamic_mask;
+
+    ///////////////////////////////////////////////////////////////////
+    // 数据输出逻辑：根据优先级选择输出 header 或主数据流
+    ///////////////////////////////////////////////////////////////////
+    always @(posedge clk or negedge rst_n) begin
+        if (~rst_n) begin
+            r_data_out <= {DATA_WD{1'b0}};
+            r_keep_out <= {DATA_BYTE_WD{1'b0}};
+        end else if (r_buffer_valid) begin
+            r_data_out <= r_buffered_data;
+            r_keep_out <= keep_insert;
+        end else if (valid_in && r_ready_in) begin
+            if (last_in) begin
+                r_data_out <= data_masked; // 最后一拍处理数据
+                r_keep_out <= keep_in;     // 最后一拍保留原 keep
+            end else begin
+                r_data_out <= data_in;     // 常规数据流
+                r_keep_out <= keep_in;
+            end
+        end
+    end
     ///////////////////////////////////////////////////////////////////
     // valid_out 的逻辑
     ///////////////////////////////////////////////////////////////////
