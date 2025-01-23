@@ -124,8 +124,9 @@ module axi_stream_insert_header #(
             r_data_out <= r_buffered_data;
             r_keep_out <= keep_insert;
         end else if (valid_in && r_ready_in) begin
-             // 处理 last_in 的情况，动态更新 keep_out
-            wire [BYTE_CNT_WD-1:0] valid_byte_count; // 最后一拍有效字节数
+            
+    // 处理 last_in 的情况，动态更新 keep_out
+    wire [BYTE_CNT_WD-1:0] valid_byte_count; // 最后一拍有效字节数
     wire [DATA_WD-1:0] dynamic_mask;         // 最后一拍动态掩码
     wire [DATA_WD-1:0] data_masked;         // 应用掩码后的数据
 
@@ -144,7 +145,7 @@ module axi_stream_insert_header #(
     // 动态掩码生成：根据有效字节数
     assign dynamic_mask = (1 << (count_valid_bytes * 8)) - 1;
     assign data_masked = data_in & dynamic_mask;
-
+            
     ///////////////////////////////////////////////////////////////////
     // 数据输出逻辑：根据优先级选择输出 header 或主数据流
     ///////////////////////////////////////////////////////////////////
