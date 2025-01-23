@@ -2,7 +2,7 @@ module tb_axi_stream_insert_header;
 
     // Parameter Definitions
     parameter DATA_WD = 32;                // 数据宽度
-    parameter DATA_BYTE_WD = DATA_WD / 8; // 数据字节宽度
+    parameter DATA_BYTE_WD = DATA_WD / 8;  // 数据字节宽度
     parameter BYTE_CNT_WD = $clog2(DATA_BYTE_WD); // 字节计数宽度
 
     // DUT Signal Declarations
