@@ -1,168 +1,281 @@
 module axi_stream_insert_header #(
-    parameter DATA_WD = 32,                // 数据位宽
-    parameter DATA_BYTE_WD = DATA_WD / 8,  // 数据字节宽度
-    parameter BYTE_CNT_WD = $clog2(DATA_BYTE_WD) // 字节计数宽度
+    parameter DATA_WD = 32,
+    parameter DATA_BYTE_WD = DATA_WD / 8,
+    parameter BYTE_CNT_WD = $clog2(DATA_BYTE_WD)
 ) (
     input clk,
     input rst_n,
-
-    // AXI Stream 输入数据
-    input valid_in,                      // 输入数据的有效标志
-    input [DATA_WD-1:0] data_in,         // 输入数据
-    input [DATA_BYTE_WD-1:0] keep_in,    // 输入数据每个字节的有效性标志
-    input last_in,                       // 标识输入数据是否为最后一拍
-    output ready_in,                     // 输入数据的准备信号（反压）
-
-    // AXI Stream 输出数据，带有插入的 header
-    output valid_out,                    // 输出数据的有效标志
-    output [DATA_WD-1:0] data_out,       // 输出数据（插入header后的数据）
-    output [DATA_BYTE_WD-1:0] keep_out,  // 输出数据每个字节的有效性标志
-    output last_out,                     // 标识输出数据是否为最后一拍
-    input ready_out,                     // 输出数据的准备信号（反压）
-
-    // 要插入的 header 数据
-    input valid_insert,                  // 标识header数据是否有效
-    input [DATA_WD-1:0] data_insert,     // 要插入的header数据
-    input [DATA_BYTE_WD-1:0] keep_insert,// header数据每个字节的有效性标志
-    input [BYTE_CNT_WD-1:0] byte_insert_cnt, // header数据有效字节数
-    output ready_insert                  // header数据的准备信号（反压）
+    // AXI Stream input original data
+    input valid_in,
+    input [DATA_WD-1 : 0] data_in,
+    input [DATA_BYTE_WD-1 : 0] keep_in,
+    input last_in,
+    output ready_in,
+    // AXI Stream output with header inserted
+    output valid_out,
+    output [DATA_WD-1 : 0] data_out,
+    output [DATA_BYTE_WD-1 : 0] keep_out,
+    output last_out,
+    input ready_out,
+    // The header to be inserted to AXI Stream input
+    input valid_insert,
+    input [DATA_WD-1 : 0] data_insert,
+    input [DATA_BYTE_WD-1 : 0] keep_insert,
+    input [BYTE_CNT_WD-1 : 0] byte_insert_cnt,
+    output ready_insert
 );
+// Your code here
 
-    // 内部信号声明
-    reg r_valid_out, r_last_out, r_inserting_header, r_buffer_valid;
-    reg [DATA_WD-1:0] r_data_out, r_buffered_data;
-    reg [DATA_BYTE_WD-1:0] r_keep_out;
-    reg [BYTE_CNT_WD-1:0] r_byte_cnt;
+reg [DATA_WD - 1 : 0]               data_insert_r;
+reg [DATA_BYTE_WD - 1 : 0]          keep_insert_r;
+reg [BYTE_CNT_WD-1 : 0]             byte_insert_cnt_r;
 
-    // 新增反压相关寄存器
-    reg r_ready_in, r_ready_insert;
+reg [DATA_WD - 1 : 0]               data_in_r;
+reg                                 last_in_r;
+reg [DATA_BYTE_WD - 1 : 0]          keep_in_r;
 
-    // 输出赋值
-    assign valid_out = r_valid_out;
-    assign data_out = r_data_out;
-    assign keep_out = r_keep_out;
-    assign last_out = r_last_out;
-    assign ready_in = r_ready_in; // 显式反压寄存器输出
-    assign ready_insert = r_ready_insert; // 显式反压寄存器输出
+reg                                 last_out_r;
+reg [DATA_WD - 1 : 0]               data_out_r;
+reg                                 valid_out_r;
+reg [DATA_BYTE_WD - 1 : 0]          keep_out_r;
 
-    ///////////////////////////////////////////////////////////////////
-    // 显式实现反压机制
-    ///////////////////////////////////////////////////////////////////
-    always @(posedge clk or negedge rst_n) begin
-        if (~rst_n) begin
-            r_ready_in <= 1'b0;
-            r_ready_insert <= 1'b0;
-        end else begin
-            r_ready_in <= !r_inserting_header && (!r_buffer_valid || ready_out);
-            r_ready_insert <= (!r_buffer_valid && ready_out);
-        end
+reg                                 ready_insert_r;
+
+/*-----------------------------------------------------header_insert-----------------------------------------------*/
+assign ready_insert = ready_out && ready_insert_r;                          
+
+always @(posedge clk or negedge rst_n) begin
+    if(!rst_n)begin
+        data_insert_r     <= 0;
+        keep_insert_r     <= 0;
+        byte_insert_cnt_r <= 0;
+        ready_insert_r    <= 1;
     end
-
-    ///////////////////////////////////////////////////////////////////
-    // 缓冲区逻辑：管理 header 数据的插入
-    ///////////////////////////////////////////////////////////////////
-    always @(posedge clk or negedge rst_n) begin
-        if (~rst_n) begin
-            r_buffer_valid <= 1'b0;
-            r_buffered_data <= {DATA_WD{1'b0}};
-        end else if (valid_insert && r_ready_insert && !r_buffer_valid) begin
-            r_buffer_valid <= 1'b1;
-            r_buffered_data <= data_insert;
-        end else if (r_buffer_valid && ready_out) begin
-            r_buffer_valid <= 1'b0;
-        end
-    end
-
-    ///////////////////////////////////////////////////////////////////
-    // 插入 header 的状态管理
-    ///////////////////////////////////////////////////////////////////
-    always @(posedge clk or negedge rst_n) begin
-        if (~rst_n) begin
-            r_inserting_header <= 1'b0;
-            r_byte_cnt <= 0;
-        end else if (valid_insert && !r_inserting_header && r_ready_insert) begin
-            r_inserting_header <= 1'b1;
-            r_byte_cnt <= byte_insert_cnt;
-        end else if (r_inserting_header && r_byte_cnt > 0 && ready_out) begin
-            r_byte_cnt <= r_byte_cnt - 1;
-            if (r_byte_cnt == 1)
-                r_inserting_header <= 1'b0;
-        end
-    end
-
-    ///////////////////////////////////////////////////////////////////
-    // 计算有效字节数：按字节处理 keep_in
-    ///////////////////////////////////////////////////////////////////
-    wire [BYTE_CNT_WD-1:0] valid_byte_count; // 最后一拍有效字节数
-    wire [DATA_WD-1:0] dynamic_mask;         // 最后一拍动态掩码
-    wire [DATA_WD-1:0] data_masked;         // 应用掩码后的数据
-
-    // 计算有效字节数：遍历 keep_in 确定有效字节
-    reg [BYTE_CNT_WD-1:0] count_valid_bytes;
-    integer i;
-    always @(*) begin
-        count_valid_bytes = 0;
-        // 遍历每个字节，检查是否有效
-        for (i = 0; i < DATA_BYTE_WD; i = i + 1) begin
-            if (keep_in[i]) begin
-                count_valid_bytes = i + 1;
+    else if(ready_out)begin
+        if(valid_in&&valid_insert)begin
+            if(last_in_r || (keep_insert != keep_insert_r))begin                                            //第一个数据用keep_insert判断截取方式，将data_insert有效字节存入data_insert_r
+                case(keep_insert)
+                    4'b0001:begin
+                    data_insert_r <= {{3{8'h00}},data_insert[7 : 0]};
+                    end
+                    4'b0011:begin
+                    data_insert_r <= {{2{8'h00}},data_insert[15 : 0]};
+                    end
+                    4'b0111:begin
+                    data_insert_r <= {{8'h00},data_insert[23 : 0]};
+                    end
+                    4'b1111:begin
+                    data_insert_r <= {data_insert[31 : 0]};
+                    end
+                    default:begin
+                    data_insert_r <= {data_insert};
+                    end
+                endcase
+                keep_insert_r     <= keep_insert;
+                byte_insert_cnt_r <= byte_insert_cnt;
+                ready_insert_r    <= 0;
             end
-        end
-    end
-
-    // 动态掩码生成：根据有效字节数
-    assign dynamic_mask = (1 << (count_valid_bytes * 8)) - 1;
-    assign data_masked = data_in & dynamic_mask;
-
-    ///////////////////////////////////////////////////////////////////
-    // 数据输出逻辑：根据优先级选择输出 header 或主数据流
-    ///////////////////////////////////////////////////////////////////
-    always @(posedge clk or negedge rst_n) begin
-        if (~rst_n) begin
-            r_data_out <= {DATA_WD{1'b0}};
-            r_keep_out <= {DATA_BYTE_WD{1'b0}};
-        end else if (r_buffer_valid) begin
-            r_data_out <= r_buffered_data;
-            r_keep_out <= keep_insert;
-        end else if (valid_in && r_ready_in) begin
-            if (last_in) begin
-                r_data_out <= data_masked; // 最后一拍处理数据
-                r_keep_out <= keep_in;     // 最后一拍保留原 keep
-            end else begin
-                r_data_out <= data_in;     // 常规数据流
-                r_keep_out <= keep_in;
+            else begin                                                       //之后数据用keep_insert_r判断截取方式，将data_in_r有效字节存入data_insert_r
+                case(keep_insert_r)
+                    4'b0001:begin
+                    data_insert_r <= {{3{8'h00}},data_in_r[7 : 0]};
+                    end
+                    4'b0011:begin
+                    data_insert_r <= {{2{8'h00}},data_in_r[15 : 0]};
+                    end
+                    4'b0111:begin
+                    data_insert_r <= {{8'h00},data_in_r[23 : 0]};
+                    end
+                    4'b1111:begin
+                    data_insert_r <= {data_in_r[31 : 0]};
+                    end
+                    default:begin
+                    data_insert_r <= data_insert_r;
+                    end
+                endcase
+                keep_insert_r     <= keep_insert_r;
+                byte_insert_cnt_r <= byte_insert_cnt_r;
+                ready_insert_r    <= ready_insert_r;
             end
+        end 
+        else begin                                                          //valid_insert=1 判断一笔data_insert传输完成，复位insert
+            keep_insert_r     <= 0;
+            data_insert_r     <= 0;
+            byte_insert_cnt_r <= 0;
+            ready_insert_r    <= 1;
         end
     end
+    else begin                                                             //中断传输，立即缓存当前数据
+        keep_insert_r     <= keep_insert_r;
+        data_insert_r     <= data_insert_r;
+        byte_insert_cnt_r <= byte_insert_cnt_r;
+        ready_insert_r    <= ready_insert_r;
+    end
+end
 
-    ///////////////////////////////////////////////////////////////////
-    // valid_out 的逻辑
-    ///////////////////////////////////////////////////////////////////
-    always @(posedge clk or negedge rst_n) begin
-        if (~rst_n)
-            r_valid_out <= 1'b0;
-        else if (ready_out) begin
-            r_valid_out <= r_buffer_valid || (valid_in && r_ready_in);
+/*-----------------------------------------------------data_in-------------------------------------------------------*/
+assign ready_in = ready_out;
+
+always @(posedge clk or negedge rst_n) begin
+    if(!rst_n)begin
+        data_in_r <= 0;
+        last_in_r <= 0;
+        keep_in_r <= 0;
+    end
+    else if(ready_out)begin
+        if(valid_in&&valid_insert)begin
+            data_in_r <= data_in;
+            last_in_r <= last_in;
+            keep_in_r <= keep_in;
         end
         else begin
-            r_valid_out <= r_valid_out;
+            data_in_r <= 0;
+            last_in_r <= 0;
+            keep_in_r <= 0;
         end
+    end
+    else begin
+        data_in_r <= data_in_r;
+        last_in_r <= last_in_r;
+        keep_in_r <= keep_in_r;
     end    
+end
 
-    ///////////////////////////////////////////////////////////////////
-    // last_out 的逻辑
-    ///////////////////////////////////////////////////////////////////
-    always @(posedge clk or negedge rst_n) begin
-        if (~rst_n)
-            r_last_out <= 1'b0;
+/*-----------------------------------------------------data_out------------------------------------------------------*/
+
+assign data_out = data_out_r;
+assign valid_out = valid_out_r || last_out_r;
+assign keep_out = keep_out_r;
+assign last_out = last_out_r;
+
+always @(posedge clk or negedge rst_n) begin
+    if(!rst_n) begin
+        data_out_r <= 0;
+        keep_out_r <= 0;
+        last_out_r <= 0;
+    end
+    else if (ready_out) begin
+            case({keep_insert_r,keep_in_r})
+            8'b0001_1000:begin
+                data_out_r <= {data_insert_r[7:0],data_in_r[31:24],{2{8'h00}}};    
+                keep_out_r <= 4'b1110;
+                last_out_r <= 1;
+            end 
+            8'b0001_1100:begin
+                data_out_r <= {data_insert_r[7:0],data_in_r[31:16],{8'h00}};    
+                keep_out_r <= 4'b1110;
+                last_out_r <= 1;
+            end          
+            8'b0001_1110:begin
+                data_out_r <= {data_insert_r[7:0],data_in_r[31:8]};    
+                keep_out_r <= 4'b1111;
+                last_out_r <= 1;
+            end
+            8'b0001_1111:begin
+                data_out_r <= {data_insert_r[7:0],data_in_r[31:8]};    
+                keep_out_r <= 4'b1111;
+                if(last_in_r) 
+                    last_out_r <= 1;
+                else 
+                    last_out_r <= 0;
+            end
+            8'b0011_1000:begin
+                data_out_r <= {data_insert_r[15:0],data_in_r[31:24],{2{8'h00}}};    
+                keep_out_r <= 4'b1110;
+                last_out_r <= 1;
+            end 
+            8'b0011_1100:begin
+                data_out_r <= {data_insert_r[15:0],data_in_r[31:16]};    
+                keep_out_r <= 4'b1111;
+                last_out_r <= 1;
+            end          
+            8'b0011_1110:begin
+                data_out_r <= {data_insert_r[15:0],data_in_r[31:16]};    
+                keep_out_r <= 4'b1111;
+                last_out_r <= 1;
+            end
+            8'b0011_1111:begin
+                data_out_r <= {data_insert_r[15:0],data_in_r[31:16]};    
+                keep_out_r <= 4'b1111;
+                if(last_in_r)
+                    last_out_r <= 1;
+                else
+                    last_out_r <= 0;
+            end
+            8'b0111_1000:begin
+                data_out_r <= {data_insert_r[23:0],data_in_r[31:24]};    
+                keep_out_r <= 4'b1111;
+                last_out_r <= 1;
+            end
+            8'b0111_1100:begin
+                data_out_r <= {data_insert_r[23:0],data_in_r[31:24]};    
+                keep_out_r <= 4'b1111;
+                last_out_r <= 1;
+            end 
+            8'b0111_1110:begin
+                data_out_r <= {data_insert_r[23:0],data_in_r[31:24]};    
+                keep_out_r <= 4'b1111;
+                last_out_r <= 1;
+            end
+            8'b0111_1111:begin
+                data_out_r <= {data_insert_r[23:0],data_in_r[31:24]};    
+                keep_out_r <= 4'b1111;
+                if(last_in_r)
+                    last_out_r <= 1;
+                else
+                    last_out_r <= 0;
+            end
+            8'b1111_1000:begin
+                data_out_r <= data_insert_r;    
+                keep_out_r <= 4'b1111;
+                last_out_r <= 1;
+            end
+            8'b1111_1100:begin
+                data_out_r <= data_insert_r;    
+                keep_out_r <= 4'b1111;
+                last_out_r <= 1;
+            end 
+            8'b1111_1110:begin
+                data_out_r <= data_insert_r;    
+                keep_out_r <= 4'b1111;
+                last_out_r <= 1;
+            end
+            8'b1111_1111:begin
+                data_out_r <= data_insert_r;    
+                keep_out_r <= 4'b1111;
+                if(last_in_r)
+                    last_out_r <= 1;
+                else
+                    last_out_r <= 0;
+            end
+            default: begin
+                data_out_r <= 0;
+                keep_out_r <= 0;
+                last_out_r <= 0;
+            end                        
+            endcase           
+        end
+    else begin
+        data_out_r <= data_out_r;
+        keep_out_r <= keep_out_r;
+        last_out_r <= last_out_r;
+    end
+end
+
+always @(posedge clk  or negedge rst_n) begin
+    if(!rst_n) begin
+        valid_out_r <= 0;
+    end
+    else if(valid_insert&&valid_in)begin
+        if(!keep_insert_r)begin
+            valid_out_r <= 0;
+        end
         else begin
-            if (r_buffer_valid) 
-                r_last_out <= 1'b0;
-            else if (valid_in && last_in && ready_out) 
-                r_last_out <= 1'b1;
-            else
-                r_last_out <= 1'b0;
+            valid_out_r <= 1;
         end
     end
-    
+    else begin
+        valid_out_r <= 0;
+    end
+end
 endmodule
